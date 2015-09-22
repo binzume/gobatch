@@ -8,7 +8,7 @@ import (
 	"log"
 )
 
-type TaskFunc func() (quit <-chan error)
+type TaskFunc func(<-chan int) (quit <-chan error)
 
 type Task struct {
 	Id string
@@ -19,7 +19,15 @@ type Task struct {
 	result int
 	v string
 	f TaskFunc
+	q chan int
 	data interface{}
+}
+
+func (t *Task) Stop() {
+	if t.q != nil {
+		close(t.q)
+		t.q = nil
+	}
 }
 
 type BatchQueue []*Task
@@ -99,11 +107,13 @@ func (b *Batch) AddGroup(g *BatchGroup) {
 						} else {
 							log.Print("start " + task.Id )
 							if task.f != nil {
-								done := task.f()
+								task.q = make(chan int, 1)
+								done := task.f(task.q)
 								e := g.running.PushBack(task)
 								go func(){
 									<- done
 									g.running.Remove(e)
+									task.Stop()
 								}()
 							}
 						}
@@ -138,6 +148,7 @@ func (b *Batch) CancelById(group string, id string) *Task {
 	}
 	for _,t := range b.GetRunnings(group) {
 		if t.Id == id {
+			t.Stop()
 			return t
 		}
 	}
@@ -155,12 +166,20 @@ func New() *Batch {
 
 var Default *Batch = New()
 
-func ShellExec(command string) (*exec.Cmd, <- chan error) {
+func ShellExec(command string, quit <- chan int) (*exec.Cmd, <- chan error) {
 	done := make(chan error, 1)
 	cmd := exec.Command("sh", "-c", command)
 	cmd.Start()
 	go func(){
 		done <- cmd.Wait()
+		cmd.Process = nil
+	}()
+	go func(){
+		<- quit
+		if cmd.Process != nil {
+			log.Printf("Killed %d, %s", cmd.Process.Pid, command)
+			cmd.Process.Kill()
+		}
 	}()
 	return cmd, done
 }
@@ -168,9 +187,9 @@ func ShellExec(command string) (*exec.Cmd, <- chan error) {
 func (b *Batch) CommandAt(group string, id string, command string, at time.Time) *Task {
 	task := &Task{Id: id, v: command, Group: group, priority: at.Unix(), index: -1}
 	b.AddTask(task)
-	task.f = func() (q <- chan error) {
+	task.f = func(quit <- chan int) (q <- chan error) {
 		log.Print("exec " + command)
-		cmd, c := ShellExec(command)
+		cmd, c := ShellExec(command, quit)
 		task.data = cmd
 		return c
 	}
