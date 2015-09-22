@@ -8,7 +8,7 @@ import (
 	"log"
 )
 
-type TaskFunc func() (result int, quit <-chan int)
+type TaskFunc func() (quit <-chan error)
 
 type Task struct {
 	Id string
@@ -18,8 +18,8 @@ type Task struct {
 	index int
 	result int
 	v string
-	C <-chan *Task
 	f TaskFunc
+	data interface{}
 }
 
 type BatchQueue []*Task
@@ -92,25 +92,20 @@ func (b *Batch) AddGroup(g *BatchGroup) {
 					// log.Printf(g.Name + " running %d tasks.", g.running.Len())
 					for b.queue[g.Name].Len() > 0 && g.running.Len() < g.NumConcurrent {
 						task := heap.Pop(b.queue[g.Name]).(*Task)
-						if task.priority <= time.Now().Unix() {
+						if g.Type == 0 && task.priority > time.Now().Unix() {
+							// requeue
+							heap.Push(b.queue[g.Name], task)
+							break
+						} else {
 							log.Print("start " + task.Id )
 							if task.f != nil {
-								_, done := task.f()
+								done := task.f()
 								e := g.running.PushBack(task)
 								go func(){
 									<- done
 									g.running.Remove(e)
-									//for t := g.running.Front(); t != nil; t = t.Next() {
-									//	if t.Value.(*Task) == task {
-									//		break
-									//	}
-									//}
 								}()
 							}
-						} else {
-							// requeue
-							heap.Push(b.queue[g.Name], task)
-							break
 						}
 					}
 			}
@@ -134,6 +129,21 @@ func (b *Batch) GetRunnings(group string) []*Task {
 	return ts
 }
 
+func (b *Batch) CancelById(group string, id string) *Task {
+	for _,t := range *b.queue[group] {
+		if t.Id == id {
+			heap.Remove(b.queue[group], t.index)
+			return t
+		}
+	}
+	for _,t := range b.GetRunnings(group) {
+		if t.Id == id {
+			return t
+		}
+	}
+	return nil
+}
+
 func New() *Batch {
 	b := &Batch{
 		queue: map[string] *BatchQueue{},
@@ -145,19 +155,24 @@ func New() *Batch {
 
 var Default *Batch = New()
 
-func (b *Batch) CommandAt(group string, cmd string, at time.Time) *Task {
-	task := &Task{Id: "", v: cmd, Group: group, priority: at.Unix()}
+func ShellExec(command string) (*exec.Cmd, <- chan error) {
+	done := make(chan error, 1)
+	cmd := exec.Command("sh", "-c", command)
+	cmd.Start()
+	go func(){
+		done <- cmd.Wait()
+	}()
+	return cmd, done
+}
+
+func (b *Batch) CommandAt(group string, id string, command string, at time.Time) *Task {
+	task := &Task{Id: id, v: command, Group: group, priority: at.Unix(), index: -1}
 	b.AddTask(task)
-	task.f = func() (r int, q <- chan int) {
-		log.Print("exec " + cmd)
-		done := make(chan int, 1)
-		cmd := exec.Command("sh", "-c", cmd)
-		cmd.Start()
-		go func(){
-			cmd.Wait()
-			done <- 1
-		}()
-		return 0, done
+	task.f = func() (q <- chan error) {
+		log.Print("exec " + command)
+		cmd, c := ShellExec(command)
+		task.data = cmd
+		return c
 	}
 	return task
 }

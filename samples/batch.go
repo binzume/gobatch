@@ -7,10 +7,11 @@ func main() {
 	batch := gobatch.Default;
 	batch.RegisterGroup("hoge", 2)
 
-	batch.CommandAt("hoge", "sleep 13", time.Now().Add(10*time.Second))
-	batch.CommandAt("hoge", "sleep 12", time.Now().Add(3*time.Second))
-	batch.CommandAt("hoge", "sleep 11", time.Now().Add(4*time.Second))
+	batch.CommandAt("hoge", "job01", "sleep 13", time.Now().Add(10*time.Second))
+	batch.CommandAt("hoge", "job02", "sleep 12", time.Now().Add(4*time.Second))
+	batch.CommandAt("hoge", "job03", "sleep 11", time.Now().Add(4*time.Second))
+	batch.CommandAt("hoge", "job04", "sleep 11", time.Now().Add(4*time.Second))
+	batch.CancelById("hoge", "job03");
 
 	batch.Wait()
 }
-
