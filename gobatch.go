@@ -72,10 +72,14 @@ func (pq *BatchQueue) update(item *Task, value string, priority int64) {
 	heap.Fix(pq, item.index)
 }
 
+type GroupMode int
+const Queue GroupMode = 0
+const RunAt GroupMode = 1
+
 type BatchGroup struct{
 	Name string
 	NumConcurrent int
-	Type int
+	Mode GroupMode
 	running *list.List // list of *Task
 	ticker *time.Ticker
 }
@@ -100,7 +104,7 @@ func (b *Batch) AddGroup(g *BatchGroup) {
 					// log.Printf(g.Name + " running %d tasks.", g.running.Len())
 					for b.queue[g.Name].Len() > 0 && g.running.Len() < g.NumConcurrent {
 						task := heap.Pop(b.queue[g.Name]).(*Task)
-						if g.Type == 0 && task.priority > time.Now().Unix() {
+						if g.Mode == RunAt && task.priority > time.Now().Unix() {
 							// requeue
 							heap.Push(b.queue[g.Name], task)
 							break
@@ -123,8 +127,8 @@ func (b *Batch) AddGroup(g *BatchGroup) {
 	}()
 }
 
-func (b *Batch) RegisterGroup(name string, numConcurrent int) {
-	b.AddGroup(&BatchGroup{Name: name, NumConcurrent: numConcurrent, Type: 0, running: list.New()});
+func (b *Batch) RegisterGroup(name string, numConcurrent int, mode GroupMode) {
+	b.AddGroup(&BatchGroup{Name: name, NumConcurrent: numConcurrent, Mode: mode, running: list.New()});
 }
 
 func (b *Batch) AddTask(t *Task) {
